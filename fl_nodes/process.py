@@ -86,6 +86,24 @@ class FL_ClearVoice_Process:
                     "description": "Input audio to process"
                 }),
             },
+            "optional": {
+                "dry_wet": ("FLOAT", {
+                    "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "description": "Blend with the original: 1.0 = fully processed, 0.3 = 30% processed"
+                }),
+                "resemble_tau": ("FLOAT", {
+                    "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "description": "Resemble Enhance only: higher = more generative restoration (brighter, more change)"
+                }),
+                "resemble_lambd": ("FLOAT", {
+                    "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "description": "Resemble Enhance only: denoise strength; use 0 for clean recordings"
+                }),
+                "resemble_nfe": ("INT", {
+                    "default": 32, "min": 1, "max": 128, "step": 1,
+                    "description": "Resemble Enhance only: solver steps (more = slower, smoother)"
+                }),
+            },
         }
 
     def _process_clearvoice(self, model_info: dict, waveform: torch.Tensor, orig_sr: int) -> Tuple[torch.Tensor, int]:
@@ -130,7 +148,8 @@ class FL_ClearVoice_Process:
 
         return processed_waveform, output_sr
 
-    def _process_resemble_enhance(self, model_info: dict, waveform: torch.Tensor, orig_sr: int) -> Tuple[torch.Tensor, int]:
+    def _process_resemble_enhance(self, model_info: dict, waveform: torch.Tensor, orig_sr: int,
+                                  nfe: int = 32, lambd: float = 0.5, tau: float = 0.5) -> Tuple[torch.Tensor, int]:
         """Process audio using Resemble-Enhance backend."""
         model_name = model_info["model_name"]
         denoise_func = model_info["denoise_func"]
@@ -160,7 +179,7 @@ class FL_ClearVoice_Process:
             processed, new_sr = denoise_func(audio_tensor, 44100, device)
         else:
             # Full enhancement (denoise + enhance)
-            processed, new_sr = enhance_func(audio_tensor, 44100, device, nfe=32, solver="midpoint", lambd=0.5, tau=0.5)
+            processed, new_sr = enhance_func(audio_tensor, 44100, device, nfe=nfe, solver="midpoint", lambd=lambd, tau=tau)
 
         # Convert back to proper shape [channels, samples]
         if processed.ndim == 1:
@@ -294,6 +313,10 @@ class FL_ClearVoice_Process:
         self,
         model: dict,
         audio: dict,
+        dry_wet: float = 1.0,
+        resemble_tau: float = 0.5,
+        resemble_lambd: float = 0.5,
+        resemble_nfe: int = 32,
     ) -> Tuple[dict, str]:
         """
         Process audio using the loaded model.
@@ -329,13 +352,22 @@ class FL_ClearVoice_Process:
             if backend == "clearvoice":
                 processed_waveform, final_sr = self._process_clearvoice(model, waveform, orig_sr)
             elif backend == "resemble_enhance":
-                processed_waveform, final_sr = self._process_resemble_enhance(model, waveform, orig_sr)
+                processed_waveform, final_sr = self._process_resemble_enhance(
+                    model, waveform, orig_sr, nfe=resemble_nfe, lambd=resemble_lambd, tau=resemble_tau)
             elif backend == "voicefixer":
                 processed_waveform, final_sr = self._process_voicefixer(model, waveform, orig_sr)
             elif backend == "novasr":
                 processed_waveform, final_sr = self._process_novasr(model, waveform, orig_sr)
             else:
                 raise ValueError(f"Unknown backend: {backend}")
+
+            if dry_wet < 1.0:
+                # Blend with the original at the output rate, trimmed to the shorter length
+                dry = resample_audio(waveform, orig_sr, final_sr)[0].float().cpu() if orig_sr != final_sr else waveform[0].float().cpu()
+                n = min(dry.shape[-1], processed_waveform.shape[-1])
+                if dry.shape[0] != processed_waveform.shape[0]:
+                    dry = dry.mean(0, keepdim=True).repeat(processed_waveform.shape[0], 1)
+                processed_waveform = dry[..., :n] * (1.0 - dry_wet) + processed_waveform[..., :n] * dry_wet
 
             # Convert to ComfyUI format
             output_audio = tensor_to_comfyui_audio(processed_waveform, final_sr)

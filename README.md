@@ -81,6 +81,17 @@ ComfyUI/models/clear_voice/
 └── voicefixer/           # VoiceFixer models
 ```
 
+## Tuning (this fork)
+
+The Process node has optional inputs; the defaults reproduce the original behaviour.
+
+- `dry_wet` (0-1): blend processed and original audio. Works well with the ClearVoice models (output is time-aligned). Do not use it with Resemble Enhance: its output is re-synthesized and offset by a few ms, so mixing causes comb filtering. Use `resemble_tau` there instead.
+- `resemble_tau` (0-1): how generative Resemble Enhance is. Higher = brighter and more change.
+- `resemble_lambd` (0-1): Resemble denoise strength. Use 0 on clean recordings.
+- `resemble_nfe`: Resemble solver steps.
+
+Dull audio from a poor microphone (clean but opaque): noise models (MossFormer2 SE, FRCRN) change nothing. `Resemble_Enhance` with `resemble_tau` ~0.8 and `resemble_lambd` 0 gave the most natural result in our test; `MossFormer2_SR_48K` with `dry_wet` ~0.3 is brighter but less natural; plain SR sounds metallic.
+
 ## Requirements
 
 - Python 3.10+
