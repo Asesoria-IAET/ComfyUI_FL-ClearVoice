@@ -7,6 +7,7 @@ importing the train.py files that depend on deepspeed.
 
 import logging
 import os
+import re
 import sys
 import importlib.util
 from functools import cache
@@ -120,11 +121,36 @@ def download_models():
     return run_dir
 
 
+_PATH_TAG = re.compile(
+    r"!!python/object/apply:pathlib\.\w*Path[ \t]*\r?\n((?:[ \t]*-[ \t].*(?:\r?\n|$))+)"
+)
+
+
+def _sanitize_hparams_yaml(run_dir):
+    """
+    Replace pickled pathlib objects in the published hparams.yaml files by plain strings.
+
+    The upstream files contain `!!python/object/apply:pathlib.PosixPath`, which cannot be
+    instantiated on Windows. These paths only matter for training, so strings are enough.
+    """
+    def _plain(match):
+        parts = [line.strip()[1:].strip() for line in match.group(1).splitlines() if line.strip()]
+        return "/".join(parts) + "\n"
+
+    for yaml_path in Path(run_dir).rglob("hparams.yaml"):
+        text = yaml_path.read_text(encoding="utf-8")
+        fixed = _PATH_TAG.sub(_plain, text)
+        if fixed != text:
+            yaml_path.write_text(fixed, encoding="utf-8")
+
+
 def _load_enhancer_model(run_dir, device):
     """
     Load enhancer model using our local standalone implementation.
     This bypasses the deepspeed import chain entirely.
     """
+    _sanitize_hparams_yaml(run_dir)
+
     # Handle both package-style and direct imports
     try:
         from .enhancer import Enhancer

@@ -371,12 +371,8 @@ class FL_ClearVoice_Process:
             traceback.print_exc()
             print(f"{'='*60}\n")
 
-            # Return empty audio on error
-            empty_audio = tensor_to_comfyui_audio(
-                torch.zeros(1, 1, 48000),
-                48000
-            )
-            return (empty_audio, f"Error: {str(e)}")
+            # Let ComfyUI show the failure; returning silence hid real errors from the user
+            raise
 
 
 # Node class mappings for ComfyUI
